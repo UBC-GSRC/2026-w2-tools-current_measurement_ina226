@@ -5,12 +5,13 @@
 Serial COM Logger for Windows
 - Connects to a COM device
 - Parses measurement blocks like:
-    Shunt Voltage [mV]: 40.67
-    Bus Voltage [V]: 11.64
-    Load Voltage [V]: 11.68
-    Current[mA]: 406.58
-    Bus Power [mW]: 4733.75
-    Values OK - no overflow
+    Current: 810.97 mA
+    Bus Voltage: 13.13 V
+    Shunt Voltage: 12.16 mV
+    Power: 10637.45 mW
+    Energy: 268.19 J
+    Charge: 20.57 C
+    Temperature: 21.65 *C
 - Appends rows to a CSV with a timestamp per reading
 - Interactive prompts in terminal
 - Press SPACE to stop recording a session, then choose to record again
@@ -41,23 +42,24 @@ except ImportError:
 # ----------- Parsing Logic -----------
 
 FIELD_PATTERNS = {
-    "shunt_mV": re.compile(r"^\s*Shunt\s+Voltage\s*\[mV\]\s*:\s*([\-]?\d+(?:\.\d+)?)\s*$", re.IGNORECASE),
-    "bus_V": re.compile(r"^\s*Bus\s+Voltage\s*\[V\]\s*:\s*([\-]?\d+(?:\.\d+)?)\s*$", re.IGNORECASE),
-    "load_V": re.compile(r"^\s*Load\s+Voltage\s*\[V\]\s*:\s*([\-]?\d+(?:\.\d+)?)\s*$", re.IGNORECASE),
-    "current_mA": re.compile(r"^\s*Current\s*\[mA\]\s*:\s*([\-]?\d+(?:\.\d+)?)\s*$", re.IGNORECASE),
-    "bus_power_mW": re.compile(r"^\s*Bus\s+Power\s*\[mW\]\s*:\s*([\-]?\d+(?:\.\d+)?)\s*$", re.IGNORECASE),
+    "current_mA": re.compile(r"^\s*Current\s*:\s*([\-]?\d+(?:\.\d+)?)\s*mA\s*$", re.IGNORECASE),
+    "bus_V": re.compile(r"^\s*Bus\s+Voltage\s*:\s*([\-]?\d+(?:\.\d+)?)\s*V\s*$", re.IGNORECASE),
+    "shunt_mV": re.compile(r"^\s*Shunt\s+Voltage\s*:\s*([\-]?\d+(?:\.\d+)?)\s*mV\s*$", re.IGNORECASE),
+    "power_mW": re.compile(r"^\s*Power\s*:\s*([\-]?\d+(?:\.\d+)?)\s*mW\s*$", re.IGNORECASE),
+    "energy_J": re.compile(r"^\s*Energy\s*:\s*([\-]?\d+(?:\.\d+)?)\s*J\s*$", re.IGNORECASE),
+    "charge_C": re.compile(r"^\s*Charge\s*:\s*([\-]?\d+(?:\.\d+)?)\s*C\s*$", re.IGNORECASE),
+    "temperature_C": re.compile(r"^\s*Temperature\s*:\s*([\-]?\d+(?:\.\d+)?)\s*\*C\s*$", re.IGNORECASE),
 }
-
-STATUS_PATTERN = re.compile(r"^\s*Values.*$", re.IGNORECASE)
 
 CSV_HEADERS = [
     "timestamp_local",
-    "shunt_mV",
-    "bus_V",
-    "load_V",
     "current_mA",
-    "bus_power_mW",
-    "status",
+    "bus_V",
+    "shunt_mV",
+    "power_mW",
+    "energy_J",
+    "charge_C",
+    "temperature_C",
 ]
 
 
@@ -67,12 +69,13 @@ def parse_block(lines):
     Returns None if the block is incomplete.
     """
     data = {
-        "shunt_mV": None,
-        "bus_V": None,
-        "load_V": None,
         "current_mA": None,
-        "bus_power_mW": None,
-        "status": None,
+        "bus_V": None,
+        "shunt_mV": None,
+        "power_mW": None,
+        "energy_J": None,
+        "charge_C": None,
+        "temperature_C": None,
     }
 
     for raw in lines:
@@ -80,24 +83,14 @@ def parse_block(lines):
         if not line:
             continue
 
-        matched_any = False
         for key, pat in FIELD_PATTERNS.items():
             m = pat.match(line)
             if m:
                 data[key] = float(m.group(1))
-                matched_any = True
                 break
 
-        if not matched_any:
-            # Try status detection
-            if STATUS_PATTERN.match(line):
-                data["status"] = line
-
     # Only accept the block if all numeric fields are present
-    if all(data[k] is not None for k in ["shunt_mV", "bus_V", "load_V", "current_mA", "bus_power_mW"]):
-        if data["status"] is None:
-            # If no explicit status line found, set generic
-            data["status"] = "N/A"
+    if all(data[k] is not None for k in ["current_mA", "bus_V", "shunt_mV", "power_mW", "energy_J", "charge_C", "temperature_C"]):
         return data
     else:
         return None
@@ -214,18 +207,19 @@ def record_once(ser, output_dir="recordings"):
                         timestamp = datetime.now().isoformat(timespec="seconds")
                         row = [
                             timestamp,
-                            data["shunt_mV"],
-                            data["bus_V"],
-                            data["load_V"],
                             data["current_mA"],
-                            data["bus_power_mW"],
-                            data["status"],
+                            data["bus_V"],
+                            data["shunt_mV"],
+                            data["power_mW"],
+                            data["energy_J"],
+                            data["charge_C"],
+                            data["temperature_C"],
                         ]
                         with open(filepath, mode="a", newline="", encoding="utf-8") as f:
                             writer = csv.writer(f)
                             writer.writerow(row)
                         # Optional: print a short confirmation
-                        print(f"[{timestamp}] V={data['bus_V']}V I={data['current_mA']}mA P={data['bus_power_mW']}mW")
+                        print(f"[{timestamp}] V={data['bus_V']}V I={data['current_mA']}mA P={data['power_mW']}mW T={data['temperature_C']}C")
                     else:
                         # Incomplete or malformed block
                         print("[WARN] Skipped an incomplete block.")
@@ -234,24 +228,24 @@ def record_once(ser, output_dir="recordings"):
             else:
                 block_lines.append(line)
 
-        # If we stopped in the middle of a block, attempt to parse it
         if block_lines:
             data = parse_block(block_lines)
             if data:
                 timestamp = datetime.now().isoformat(timespec="seconds")
                 row = [
                     timestamp,
-                    data["shunt_mV"],
-                    data["bus_V"],
-                    data["load_V"],
                     data["current_mA"],
-                    data["bus_power_mW"],
-                    data["status"],
+                    data["bus_V"],
+                    data["shunt_mV"],
+                    data["power_mW"],
+                    data["energy_J"],
+                    data["charge_C"],
+                    data["temperature_C"],
                 ]
                 with open(filepath, mode="a", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(row)
-                print(f"[{timestamp}] (final block) V={data['bus_V']}V I={data['current_mA']}mA P={data['bus_power_mW']}mW")
+                print(f"[{timestamp}] (final block) V={data['bus_V']}V I={data['current_mA']}mA P={data['power_mW']}mW T={data['temperature_C']}C")
 
     except KeyboardInterrupt:
         print("\n[INFO] KeyboardInterrupt received. Stopping recording.")
